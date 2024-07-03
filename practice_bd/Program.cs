@@ -52,7 +52,7 @@ namespace practice_bd
             }
 
             string tableName = parts[0];
-            Dictionary<string, string> filters = null;
+            List<FilterCondition> filters = null;
 
             if (parts.Length > 2 && parts[1] == "-f")
             {
@@ -63,7 +63,7 @@ namespace practice_bd
             ExportDataToJsonWithFilters(tableName, savePath, filters);
         }
 
-        public static void ExportDataToJsonWithFilters(string tableName, string savePath, Dictionary<string, string> filters = null)
+        public static void ExportDataToJsonWithFilters(string tableName, string savePath, List<FilterCondition> filters = null)
         {
             using (IDbConnection db = new NpgsqlConnection(connectionString))
             {
@@ -95,7 +95,7 @@ namespace practice_bd
             }
         }
 
-        private static DataTable GetDataFromTable(IDbConnection db, string tableName, Dictionary<string, string> filters = null)
+        private static DataTable GetDataFromTable(IDbConnection db, string tableName, List<FilterCondition> filters = null)
         {
             string query = $"SELECT * FROM {tableName}";
             var data = db.Query(query).ToList();
@@ -215,9 +215,9 @@ namespace practice_bd
             return false;
         }
 
-        private static Dictionary<string, string> ReadFiltersFromCsv(string csvFilePath)
+        private static List<FilterCondition> ReadFiltersFromCsv(string csvFilePath)
         {
-            var filters = new Dictionary<string, string>();
+            var filters = new List<FilterCondition>();
 
             using (var reader = new StreamReader(csvFilePath))
             using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
@@ -228,33 +228,63 @@ namespace practice_bd
                 while (csv.Read())
                 {
                     var filterColumn = csv.GetField<string>("filter_column");
+                    var filterOperator = csv.GetField<string>("filter_operator");
                     var filterValue = csv.GetField<string>("filter_value");
 
-                    filters.Add(filterColumn, filterValue);
+                    filters.Add(new FilterCondition
+                    {
+                        ColumnName = filterColumn,
+                        Operator = filterOperator,
+                        Value = filterValue
+                    });
                 }
             }
 
             return filters;
         }
 
-        private static void ApplyFilters(DataTable dataTable, Dictionary<string, string> filters)
+        private static void ApplyFilters(DataTable dataTable, List<FilterCondition> filters)
         {
             foreach (var filter in filters)
             {
-                string columnName = filter.Key;
-                string filterValue = filter.Value;
-
-                // Применение фильтра к данным таблицы
                 for (int i = dataTable.Rows.Count - 1; i >= 0; i--)
                 {
-                    var cellValue = dataTable.Rows[i][columnName]?.ToString();
+                    var cellValue = dataTable.Rows[i][filter.ColumnName];
 
-                    if (cellValue != filterValue)
+                    if (!EvaluateCondition(cellValue, filter.Operator, filter.Value))
                     {
                         dataTable.Rows.RemoveAt(i);
                     }
                 }
             }
         }
+
+        private static bool EvaluateCondition(object cellValue, string filterOperator, string filterValue)
+        {
+            switch (filterOperator)
+            {
+                case "=":
+                    return cellValue.ToString() == filterValue;
+                case ">":
+                    return Convert.ToDouble(cellValue) > Convert.ToDouble(filterValue);
+                case "<":
+                    return Convert.ToDouble(cellValue) < Convert.ToDouble(filterValue);
+                case ">=":
+                    return Convert.ToDouble(cellValue) >= Convert.ToDouble(filterValue);
+                case "<=":
+                    return Convert.ToDouble(cellValue) <= Convert.ToDouble(filterValue);
+                case "!=":
+                    return cellValue.ToString() != filterValue;
+                default:
+                    throw new ArgumentException($"Unsupported operator: {filterOperator}");
+            }
+        }
+    }
+
+    public class FilterCondition
+    {
+        public string ColumnName { get; set; }
+        public string Operator { get; set; }
+        public string Value { get; set; }
     }
 }
