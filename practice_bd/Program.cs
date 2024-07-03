@@ -18,38 +18,36 @@ namespace practice_bd
 
         static void Main(string[] args)
         {
-
-            Console.WriteLine("Введите строку подключения: ");
-            while (true)
-            {
-                Console.WriteLine("Host:");
-                string host = Console.ReadLine();
-                Console.WriteLine("Username:");
-                string username = Console.ReadLine();
-                Console.WriteLine("Password:");
-                string password = Console.ReadLine();
-                Console.WriteLine("Database:");
-                string database = Console.ReadLine();
-                Console.WriteLine("Вы уверены в строке подключения? ( Y / N )");
-                if (Console.ReadLine() == "Y" || Console.ReadLine() == "y")
-                {
-                    connectionString = $"Host={host};Username={username};Password={password};Database={database}";
-                    Console.Clear();
-                    break;
-                }
-                else if (Console.ReadLine() == "N" || Console.ReadLine() == "n")
-                {
-                    connectionString = string.Empty;
-                    Console.WriteLine("Введите строку подключения: ");
-
-                }
-            }
+            //Console.WriteLine("Введите строку подключения: ");
+            //while (true)
+            //{
+            //    Console.WriteLine("Host:");
+            //    string host = Console.ReadLine();
+            //    Console.WriteLine("Username:");
+            //    string username = Console.ReadLine();
+            //    Console.WriteLine("Password:");
+            //    string password = Console.ReadLine();
+            //    Console.WriteLine("Database:");
+            //    string database = Console.ReadLine();
+            //    Console.WriteLine("Вы уверены в строке подключения? ( Y / N )");
+            //    if (Console.ReadLine().ToLower() == "y")
+            //    {
+            //        connectionString = $"Host={host};Username={username};Password={password};Database={database}";
+            //        Console.Clear();
+            //        break;
+            //    }
+            //    else if (Console.ReadLine().ToLower() == "n")
+            //    {
+            //        connectionString = string.Empty;
+            //        Console.WriteLine("Введите строку подключения: ");
+            //    }
+            //}
 
             Console.WriteLine("Введите путь сохранения файлов:");
             string savePath = Console.ReadLine();
             while (true)
             {
-                Console.WriteLine("Введите команду (например, 'mater_tsennost' или 'mater_tsennost -f путь_к_csv_файлу.csv'):");
+                Console.WriteLine("Введите команду (например, 'mater_tsennost', 'mater_tsennost -f путь_к_csv_файлу.csv' или 'import \"путь_к_json_файлу.json\"'):");
                 string command = Console.ReadLine();
 
                 if (command.ToLower() == "exit")
@@ -78,6 +76,13 @@ namespace practice_bd
                 return;
             }
 
+            if (parts[0].ToLower() == "import" && parts.Length > 1)
+            {
+                string jsonFilePath = parts[1];
+                ImportDataFromJson(jsonFilePath);
+                return;
+            }
+
             string tableName = parts[0];
             List<FilterCondition> filters = null;
 
@@ -89,6 +94,116 @@ namespace practice_bd
 
             ExportDataToJsonWithFilters(tableName, savePath, filters);
         }
+
+        public static void ImportDataFromJson(string jsonFilePath)
+        {
+            try
+            {
+                string jsonData = File.ReadAllText(jsonFilePath);
+                var data = JsonConvert.DeserializeObject<Dictionary<string, List<Dictionary<string, object>>>>(jsonData);
+
+                using (IDbConnection db = new NpgsqlConnection(connectionString))
+                {
+                    db.Open();
+                    using (var transaction = db.BeginTransaction())
+                    {
+                        foreach (var table in data)
+                        {
+                            var tableName = table.Key;
+                            var rows = table.Value;
+
+                            // Удаление записей в зависимых таблицах
+                            var relatedTables = GetRelatedTables(tableName, db);
+                            foreach (var relatedTable in relatedTables)
+                            {
+                                string mainTablePrimaryKey = GetPrimaryKeyColumnName(tableName, db);
+                                string relatedTableForeignKey = GetForeignKeyColumnName(relatedTable, tableName, db);
+
+                                db.Execute($"DELETE FROM {relatedTable} WHERE {relatedTableForeignKey} IN (SELECT {mainTablePrimaryKey} FROM {tableName})", transaction: transaction);
+                            }
+
+                            // Очищаем таблицу перед вставкой новых данных
+                            db.Execute($"DELETE FROM {tableName}", transaction: transaction);
+
+                            foreach (var row in rows)
+                            {
+                                var columns = string.Join(", ", row.Keys);
+                                var values = string.Join(", ", row.Values.Select(v => $"'{v}'"));
+                                var insertQuery = $"INSERT INTO {tableName} ({columns}) VALUES ({values})";
+                                db.Execute(insertQuery, transaction: transaction);
+                            }
+                        }
+
+                        transaction.Commit();
+                    }
+                }
+
+                Console.WriteLine($"Данные из {jsonFilePath} успешно импортированы.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Ошибка при импорте данных из JSON файла: {ex.Message}");
+            }
+        }
+
+        private static List<string> GetRelatedTables(string tableName, IDbConnection db)
+        {
+            string query = @"
+        SELECT DISTINCT
+            kcu1.table_name AS related_table
+        FROM
+            information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu1
+                ON tc.constraint_name = kcu1.constraint_name
+            JOIN information_schema.referential_constraints AS rc
+                ON tc.constraint_name = rc.constraint_name
+            JOIN information_schema.key_column_usage AS kcu2
+                ON rc.unique_constraint_name = kcu2.constraint_name
+        WHERE
+            tc.constraint_type = 'FOREIGN KEY'
+            AND kcu2.table_name = @TableName";
+
+            var relatedTables = db.Query<string>(query, new { TableName = tableName }).ToList();
+            return relatedTables;
+        }
+
+        private static string GetPrimaryKeyColumnName(string tableName, IDbConnection db)
+        {
+            string query = @"
+        SELECT
+            kcu.column_name
+        FROM
+            information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu
+                ON tc.constraint_name = kcu.constraint_name
+        WHERE
+            tc.constraint_type = 'PRIMARY KEY'
+            AND kcu.table_name = @TableName";
+
+            return db.QuerySingle<string>(query, new { TableName = tableName });
+        }
+
+        private static string GetForeignKeyColumnName(string relatedTable, string tableName, IDbConnection db)
+        {
+            string query = @"
+        SELECT
+            kcu1.column_name
+        FROM
+            information_schema.table_constraints AS tc
+            JOIN information_schema.key_column_usage AS kcu1
+                ON tc.constraint_name = kcu1.constraint_name
+            JOIN information_schema.referential_constraints AS rc
+                ON tc.constraint_name = rc.constraint_name
+            JOIN information_schema.key_column_usage AS kcu2
+                ON rc.unique_constraint_name = kcu2.constraint_name
+        WHERE
+            tc.constraint_type = 'FOREIGN KEY'
+            AND kcu2.table_name = @TableName
+            AND kcu1.table_name = @RelatedTable";
+
+            return db.QuerySingle<string>(query, new { TableName = tableName, RelatedTable = relatedTable });
+        }
+
 
         public static void ExportDataToJsonWithFilters(string tableName, string savePath, List<FilterCondition> filters = null)
         {
@@ -177,26 +292,7 @@ namespace practice_bd
             File.WriteAllText(filePath, json);
         }
 
-        private static List<string> GetRelatedTables(string tableName, IDbConnection db)
-        {
-            string query = @"
-                SELECT DISTINCT
-                    kcu2.table_name AS related_table
-                FROM
-                    information_schema.table_constraints AS tc
-                    JOIN information_schema.key_column_usage AS kcu1
-                        ON tc.constraint_name = kcu1.constraint_name
-                    JOIN information_schema.referential_constraints AS rc
-                        ON tc.constraint_name = rc.constraint_name
-                    JOIN information_schema.key_column_usage AS kcu2
-                        ON rc.unique_constraint_name = kcu2.constraint_name
-                WHERE
-                    tc.constraint_type = 'FOREIGN KEY'
-                    AND kcu1.table_name = @TableName";
-
-            var relatedTables = db.Query<string>(query, new { TableName = tableName }).ToList();
-            return relatedTables;
-        }
+        
 
         private static DataTable GetFilteredRelatedData(IDbConnection db, string relatedTable, DataTable mainData, string mainTableName)
         {
