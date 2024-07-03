@@ -88,8 +88,20 @@ namespace practice_bd
                     allData[relatedTable] = relatedData;
                 }
 
+                // Формирование имени файла
+                string fileName = tableName;
+                if (filters != null && filters.Any())
+                {
+                    fileName += "_f";
+                }
+                if (relatedTables.Any())
+                {
+                    fileName += "_wr";
+                }
+                fileName += ".json";
+
                 // Запись всех данных в JSON
-                string filePath = Path.Combine(savePath, $"{tableName}_filtered.json");
+                string filePath = Path.Combine(savePath, fileName);
                 WriteAllDataToJson(allData, filePath);
                 Console.WriteLine($"Данные экспортированы в {filePath}");
             }
@@ -276,15 +288,15 @@ namespace practice_bd
                 case "!=":
                     return cellValue.ToString() != filterValue;
                 default:
-                    throw new ArgumentException($"Unsupported operator: {filterOperator}");
+                    throw new ArgumentException($"Неизвестный оператор фильтра: {filterOperator}");
             }
         }
-    }
 
-    public class FilterCondition
-    {
-        public string ColumnName { get; set; }
-        public string Operator { get; set; }
-        public string Value { get; set; }
+        public class FilterCondition
+        {
+            public string ColumnName { get; set; }
+            public string Operator { get; set; }
+            public string Value { get; set; }
+        }
     }
 }
