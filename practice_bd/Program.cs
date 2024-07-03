@@ -18,6 +18,33 @@ namespace practice_bd
 
         static void Main(string[] args)
         {
+
+            Console.WriteLine("Введите строку подключения: ");
+            while (true)
+            {
+                Console.WriteLine("Host:");
+                string host = Console.ReadLine();
+                Console.WriteLine("Username:");
+                string username = Console.ReadLine();
+                Console.WriteLine("Password:");
+                string password = Console.ReadLine();
+                Console.WriteLine("Database:");
+                string database = Console.ReadLine();
+                Console.WriteLine("Вы уверены в строке подключения? ( Y / N )");
+                if (Console.ReadLine() == "Y" || Console.ReadLine() == "y")
+                {
+                    connectionString = $"Host={host};Username={username};Password={password};Database={database}";
+                    Console.Clear();
+                    break;
+                }
+                else if (Console.ReadLine() == "N" || Console.ReadLine() == "n")
+                {
+                    connectionString = string.Empty;
+                    Console.WriteLine("Введите строку подключения: ");
+
+                }
+            }
+
             Console.WriteLine("Введите путь сохранения файлов:");
             string savePath = Console.ReadLine();
             while (true)
